@@ -16,8 +16,10 @@
 import QtiValidationException from '@/components/qti/exceptions/QtiValidationException'
 import QtiParseException from '@/components/qti/exceptions/QtiParseException'
 import QtiAttributeValidation from '@/components/qti/validation/QtiAttributeValidation'
+import QtiProcessing from '@/components/qti/processing/utils/QtiProcessing'
 
 const qtiAttributeValidation = new QtiAttributeValidation()
+const qtiProcessing = new QtiProcessing()
 
 export default {
   name: 'QtiAssessmentSection',
@@ -267,25 +269,28 @@ export default {
           const tag = qtiAttributeValidation.kebabCase(sectionPart.$options.name)
           if (this.isItemRef(tag)) {
 
-            const identifier = sectionPart.getIdentifier()
+            const itemObject = 
+                      this.createItemObject(
+                        sectionPart.getIdentifier(),
+                        sectionPart.getIsFixed())
 
             // Add the required item, decrement selectionCount
             if (sectionPart.getIsRequired()) {
 
               // Only add to requiredItems if selectionCount remains greater than 0
               if (selectionCount > 0) {
-                requiredItems.push(identifier)
+                requiredItems.push(itemObject)
                 selectionCount--
               }
 
             } else {
               // Optional item
-              optionalItems.push(identifier)
+              optionalItems.push(itemObject)
             }
 
           } else if (this.isSection(tag)) {
             sectionPart.getSectionItemIdentifiers().forEach((identifier) => {
-              requiredItems.push(identifier)
+              requiredItems.push(this.createItemObject(identifier, true))
             })
           }
         })
@@ -293,9 +298,12 @@ export default {
         // Now select random items from optional pool up until we have reached 
         // our selection count
         for (let r = 0; r < selectionCount; r++) {
-          let item = this.getRandomItem(optionalItems)
-          requiredItems.push(item)
-          optionalItems.splice(optionalItems.indexOf(item), 1)
+          let itemObject = this.getRandomItem(optionalItems)
+          requiredItems.push(itemObject)
+          // Find the optionalItem index (by identifier)
+          const index = optionalItems.findIndex(obj => obj.identifier === itemObject.identifier)
+          // Remove the item from optionalItems
+          optionalItems.splice(index, 1)
         }
 				
 			} else {
@@ -304,13 +312,13 @@ export default {
         this.sectionParts.forEach((sectionPart) => {
           const tag = qtiAttributeValidation.kebabCase(sectionPart.$options.name)
           if (this.isItemRef(tag)) {
-            requiredItems.push(sectionPart.getIdentifier())
+            requiredItems.push(this.createItemObject(sectionPart.getIdentifier(), sectionPart.getIsFixed()))
           } else if (this.isSection(tag)) {
 
             // TODO: Check the Section's visible attribute
             // For now, just add the nested Section's items
             sectionPart.getSectionItemIdentifiers().forEach((identifier) => {
-              requiredItems.push(identifier)
+              requiredItems.push(this.createItemObject(identifier, true))
             })
 
           }
@@ -318,10 +326,16 @@ export default {
 
       }
 
-      this.setSectionItemIdentifiers(
-        isShuffle
-          ? this.shuffleItemIdentifiers(requiredItems)
-          : requiredItems)
+      // Create a Map of all items (including nested Section items) in this Section
+      this.createSectionItemsMap(requiredItems)
+
+      if (isShuffle) {
+        // Shuffle requiredItems in place
+        qtiProcessing.shuffleArrayFixed(requiredItems)
+      }
+
+      // Save the final list of Section Item Identifiers
+      this.setSectionItemIdentifiers(this.createIdentifierArray(requiredItems))
     },
 
     /**
@@ -329,9 +343,8 @@ export default {
      * @param {*} identifierArray the array of item identifiers
      */
     createSectionItemsMap (identifierArray) {
-      for (let i=0; i <= identifierArray.length; i++) {
-
-        const identifier = identifierArray[i]
+      for (let i=0; i<identifierArray.length; i++) {
+        const identifier = identifierArray[i].identifier
 
         // sectionParts may be an item ref or a nested section
         this.sectionParts.forEach((sectionPart) => {
@@ -362,16 +375,31 @@ export default {
       return itemArray[Math.floor(Math.random() * itemArray.length)]
     },
 
-    shuffleItemIdentifiers (itemIdentifierArray) {
-      const shuffledItems = []
-
-      for (let i=0; i <= itemIdentifierArray.length; i++) {
-        const itemIdentifier = this.getRandomItem(itemIdentifierArray)
-        shuffledItems.push(itemIdentifier)
-        itemIdentifierArray.splice(itemIdentifierArray.indexOf(itemIdentifier), 1)
+    /**
+     * @description Create an object with two item properties: identifier, fixed
+     * @param String - identifier
+     * @param Boolean - isFixed
+     * @return {Object} 
+     */
+    createItemObject (identifier, isFixed) {
+      return {
+        identifier: identifier,
+        fixed: isFixed
       }
+    },
 
-      return shuffledItems
+    /**
+     * @description Flatten an array of {Objects} containing 
+     * identifiers into an array of identifiers.
+     * @param Array - Array of Objects
+     * @return Array - Array of String identifiers
+     */
+    createIdentifierArray (itemsArray) {
+      const identifierArray = []
+      for (let i=0; i<itemsArray.length; i++) {
+        identifierArray.push(itemsArray[i].identifier)
+      }
+      return identifierArray
     },
 
     getSelectionCount () {
@@ -553,9 +581,6 @@ export default {
 
       // Compute this section's items
       this.selectItems()
-
-      // Build the final section items map
-      this.createSectionItemsMap(this.getSectionItemIdentifiers())
     },
 
     processChildren () {
